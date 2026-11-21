@@ -6,7 +6,7 @@ pub(crate) use whitted::*;
 
 use crate::utils::samplers;
 
-pub(super) const RECAST_EPSILON: f32 = 1e-4;
+pub(super) const RECAST_EPSILON: f32 = 1e-3;
 
 pub(super) trait Integrator: Copy + Sync + Send {
     /// Returns:

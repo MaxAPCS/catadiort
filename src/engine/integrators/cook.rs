@@ -50,7 +50,16 @@ impl Integrator for Cook {
             // Shade
             hit.norm = wider::copysign(hit.norm, -hit.wdir);
             let (norm, matr) = hit.shade(depth);
+
+            // Normal Convention
+            // norm flip against wdir
             hit.norm = wider::copysign(norm.normalized(), -hit.wdir);
+            // norm flip to wnorm
+            let normf = wider::copysign(hit.norm, hit.wnorm);
+            // wnorm is against wdir? (to norm?)
+            let entering = hit.wnorm.dot(hit.wdir) <= 0.;
+            // wnorm flip against wdir (to norm)
+            let wnormf = wider::copysign(hit.wnorm, -hit.wdir);
 
             // Sample RNG
             let lightrays = world.lightrays(&hit.wpos, &mut samplers[i], self.lightsamples);
@@ -61,9 +70,7 @@ impl Integrator for Cook {
             );
 
             // Global Computations
-            let entering = hit.wdir.dot(hit.wnorm) <= 0.;
             let flecdir = hit.reflect();
-            let wnormf = wider::copysign(hit.wnorm, -hit.wdir);
             let alpha = matr.roughness * matr.roughness;
             let smoothness = ((alpha * alpha).recip() * 2. - 2.).max(1.);
 
@@ -80,7 +87,7 @@ impl Integrator for Cook {
                             if alpha < 0.001 {
                                 // Smooth Conductor
 
-                                let 进方 = hit.norm.dot(-hit.wdir);
+                                let 进方 = normf.dot(hit.wdir);
                                 let 进数 = matr.specular
                                     + (Vec3::one() - matr.specular) * (1. - 进方).powi(5);
                                 let 总数 = matr.specular + (Vec3::one() - matr.specular) / 21.;
@@ -89,7 +96,7 @@ impl Integrator for Cook {
                                 denominv.apply(|c| if c.is_finite() { c } else { 0. });
 
                                 Box::new(move |wdir: Vec3| {
-                                    let 出方 = hit.norm.dot(wdir).max(0.);
+                                    let 出方 = normf.dot(wdir).max(0.);
                                     let 出数 = matr.specular
                                         + (Vec3::one() - matr.specular) * (1. - 出方).powi(5);
                                     let 省 = (Vec3::one() - 进数) * (Vec3::one() - 出数) * denominv;
@@ -99,7 +106,7 @@ impl Integrator for Cook {
                                 // Rough Conductor
 
                                 // Entrance Direction
-                                let 进方 = hit.norm.dot(-hit.wdir);
+                                let 进方 = normf.dot(hit.wdir);
                                 // BRDF Entrance Weight
                                 let 进数 =
                                     ggx_albedo::ggx_albedo(matr.roughness, 进方, matr.specular);
@@ -112,7 +119,7 @@ impl Integrator for Cook {
 
                                 Box::new(move |wdir: Vec3| {
                                     // Exit Direction
-                                    let 出方 = hit.norm.dot(wdir).max(0.);
+                                    let 出方 = normf.dot(wdir).max(0.);
                                     // BRDF Exit Weight
                                     let 出数: Vec3 =
                                         ggx_albedo::ggx_albedo(matr.roughness, 出方, matr.specular);
@@ -132,7 +139,7 @@ impl Integrator for Cook {
                         let r0 = ((matr.ior - MEDIUM_IOR) / (matr.ior + MEDIUM_IOR)).powi(2);
 
                         // Interface Entrance Weight
-                        let 进数 = whitted::refraction(hit.wdir, hit.norm, matr.ior, entering).0;
+                        let 进数 = whitted::schlick(normf.dot(hit.wdir), matr.ior);
                         // Interface Total Weight
                         let 总数 = if entering {
                             r0 + (1. - r0) / 21.
@@ -147,7 +154,7 @@ impl Integrator for Cook {
 
                         Box::new(move |wdir: Vec3| {
                             // Interface Exit Weight
-                            let 出数 = whitted::refraction(-wdir, hit.norm, matr.ior, entering).0;
+                            let 出数 = whitted::schlick(normf.dot(wdir), matr.ior);
                             // Interface Normalized "Unused" Weight
                             let 省 = (1. - 进数) * (1. - 出数) * denominv;
                             // Ray Direction Albedo
@@ -164,7 +171,7 @@ impl Integrator for Cook {
                         continue;
                     }
                     let lpos = lr.pos + lr.dir * lr.max_t;
-                    lr.pos += wider::copysign(wnormf, lr.dir) * RECAST_EPSILON;
+                    lr.pos += wider::copysign(hit.wnorm, lr.dir) * RECAST_EPSILON;
                     if lr.max_t.is_finite() {
                         let ldir = lpos - lr.pos;
                         let ldst = ldir.mag();
@@ -175,17 +182,17 @@ impl Integrator for Cook {
                     if lr.obstructed() {
                         continue;
                     }
-                    diffuse += albedo(lr.dir)
+                    diffuse += albedo(-lr.dir)
                         * core::f32::consts::FRAC_1_PI
                         * hit.norm.dot(lr.dir)
                         * lr.irradiance;
                     let cosout = flecdir.dot(lr.dir);
                     if matr.roughness > 0. && matr.specs() && car >= coslobe && cosout >= 0. {
-                        let cosh = (-hit.wdir + lr.dir).normalized().dot(-hit.wdir);
+                        let cosh = (hit.wdir + -lr.dir).normalized().dot(hit.wdir);
                         let flecwgh = if matr.transmission == 0. {
                             matr.specular + (Vec3::one() - matr.specular) * (1. - cosh).powi(5)
                         } else {
-                            matr.specular * whitted::fresnel(cosh, matr.ior)
+                            matr.specular * whitted::schlick(cosh, matr.ior)
                         };
 
                         let prob = (smoothness + 1.) * core::f32::consts::FRAC_1_PI / 2.
@@ -217,7 +224,7 @@ impl Integrator for Cook {
 
                     // Compute Reflection Weight
                     let flecwgh = matr.specular
-                        + (Vec3::one() - matr.specular) * (1. - hit.norm.dot(-hit.wdir)).powi(5);
+                        + (Vec3::one() - matr.specular) * (1. - normf.dot(hit.wdir)).powi(5);
 
                     if matr.roughness == 0. {
                         // Smooth Conductor
@@ -231,8 +238,7 @@ impl Integrator for Cook {
 
                         // Sample Specular Reflection Direction
                         let specflecdir =
-                            warp::recenter(warp::sample_phong_lobe(specdiruv, smoothness), flecdir)
-                                .normalized();
+                            warp::recenter(warp::sample_phong_lobe(specdiruv, smoothness), flecdir);
                         if specflecdir.dot(hit.norm) > 0. {
                             // Compute Specular Reflection Weight
                             let specflecwgh = matr.specular
@@ -251,7 +257,7 @@ impl Integrator for Cook {
                             // Rough Conductor
 
                             // Entrance Direction
-                            let 进方 = hit.norm.dot(-hit.wdir);
+                            let 进方 = normf.dot(hit.wdir);
                             // BRDF Entrance Weight
                             let 进数 = ggx_albedo::ggx_albedo(matr.roughness, 进方, matr.specular);
                             // BRDF Total Weight
@@ -308,8 +314,7 @@ impl Integrator for Cook {
                     {
                         // Sample Specular Reflection Direction
                         let specflecdir =
-                            warp::recenter(warp::sample_phong_lobe(specdiruv, smoothness), flecdir)
-                                .normalized();
+                            warp::recenter(warp::sample_phong_lobe(specdiruv, smoothness), flecdir);
                         if specflecdir.dot(hit.norm) > 0. {
                             // Specular Reflection
                             child(matr.specular * flecwgh, specflecdir)
@@ -318,8 +323,7 @@ impl Integrator for Cook {
                     if !fracdir.x.is_nan() {
                         // Sample Specular Refraction Direction
                         let specfracdir =
-                            warp::recenter(warp::sample_phong_lobe(specdiruv, smoothness), fracdir)
-                                .normalized();
+                            warp::recenter(warp::sample_phong_lobe(specdiruv, smoothness), fracdir);
                         if specfracdir.dot(hit.norm) <= 0. {
                             // Specular Refraction
                             child(matr.transmission * fracwgh, specfracdir)

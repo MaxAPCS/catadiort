@@ -16,7 +16,7 @@ use crate::utils::{
 use crate::{AOV, options::Sampler};
 
 /// Maximum Concurrent Rays
-const RAY_CONCURRENCY: u32 = 2u32.pow(22);
+const RAY_CONCURRENCY: u32 = 2u32.pow(24);
 
 /// The graphics state. rtBegin resets it to the defaults listed at
 /// rtBegin. Options and attributes persist across rtWorldBegin/End pairs;
@@ -359,6 +359,9 @@ pub extern "C" fn rtWorldEnd() {
     if let Some(height) = o.height {
         s.res.1 = height.into();
     }
+    if let Some(sampler) = o.sampler {
+        s.sampler = sampler;
+    }
     if let Some(spp) = o.spp {
         s.samples = spp.isqrt().get() as _;
     }
@@ -368,14 +371,17 @@ pub extern "C" fn rtWorldEnd() {
     if let Some(ambient) = o.ambient {
         s.ambient = ambient.into();
     }
-    if let Some(sampler) = o.sampler {
-        s.sampler = sampler;
-    }
     if o.lens >= 0. {
         s.lens_radius = o.lens;
     }
     let lightsamples = o.light_samples as _;
     let seed = o.seed;
+
+    if matches!(o.integrator, Integrator::Whitted) {
+        s.sampler = Sampler::Center;
+        s.samples = 1;
+        s.lens_radius = 0.;
+    }
 
     let total = Timer::new();
     let (build_time, render_time, budget, frame) = {
@@ -395,7 +401,7 @@ pub extern "C" fn rtWorldEnd() {
         let up = tofwd.cross(s.up).cross(tofwd).normalized();
         let totop = halfheight * up;
         let torgh = halfheight * (s.res.0 as f32 / s.res.1 as f32) * Vec3::cross(&tofwd, up);
-        let res: (u32, u32, u32) = (s.res.0 as _, s.res.1 as _, s.samples as _);
+        let res = (s.res.0 as _, s.res.1 as _, s.samples as _);
 
         let build_time = total.seconds();
         let render = Timer::new();

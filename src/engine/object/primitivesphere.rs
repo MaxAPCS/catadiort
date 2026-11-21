@@ -230,12 +230,15 @@ impl Sphere {
         let wnorm: [Vec3; 4] = wider::transform_vecx4(&self.owtrans_dual, opos)
             .normalized()
             .into();
-        let t = t.as_array_ref();
         let opos: [Vec3; 4] = opos.into();
+        let t = t.as_array_ref();
         let (u, v) = (uv.0.as_array_ref(), uv.1.as_array_ref());
 
         let mut out = [u32::MAX; 4];
         for i in 0..4 {
+            if t[i].is_nan() {
+                continue;
+            }
             let mut ctx = RtShadeContext::new(
                 &self.cutoutparams,
                 wpos[i],

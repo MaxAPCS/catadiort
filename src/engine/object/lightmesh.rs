@@ -32,10 +32,7 @@ impl Light for MeshLight {
         // Sample Indexing Area
         let ua = uv.x * ta;
         // Sampled Triangle Index
-        let idx = self
-            .tris
-            .partition_point(|&(a, _)| a < ua)
-            .min(self.tris.len() - 1);
+        let idx = self.tris.partition_point(|t| t.0 < ua);
         let tri = &self.tris[idx];
 
         // Previous Triangle Cumulative Area

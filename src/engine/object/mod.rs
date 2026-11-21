@@ -86,7 +86,7 @@ pub(in crate::engine) fn from_emissive(
         Some(MeshEmissive(
             meshlight,
             MeshStandin::Plane(PlaneLight {
-                pos: wcen,
+                cen: wcen,
                 intensity: material.emission * wdoublearea / 2.,
                 norm: wnorm0,
             }),

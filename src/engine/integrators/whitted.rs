@@ -56,13 +56,19 @@ impl Integrator for Whitted {
                 if sr.obstructed() || hit.norm.dot(sr.dir) <= 0.0 {
                     return None;
                 }
-                sr.pos += wider::copysign(hit.wnorm * RECAST_EPSILON, sr.dir);
-                sr.max_t -= RECAST_EPSILON;
+                let lpos = sr.pos + sr.dir * sr.max_t;
+                sr.pos += wider::copysign(hit.wnorm, sr.dir) * RECAST_EPSILON;
+                if sr.max_t.is_finite() {
+                    let ldir = lpos - sr.pos;
+                    let ldst = ldir.mag();
+                    sr.dir = ldir / ldst;
+                    sr.max_t = ldst - RECAST_EPSILON;
+                }
                 world.obstruct(&mut sr, u16::MAX);
                 if sr.obstructed() { None } else { Some(sr) }
             });
             for shadowray in shadowrays {
-                diffuse += shadowray.irradiance * hit.norm.dot(shadowray.dir).max(0.);
+                diffuse += shadowray.irradiance * shadowray.dir.dot(hit.norm).max(0.);
                 specular += shadowray.irradiance
                     * shadowray
                         .dir
@@ -72,11 +78,11 @@ impl Integrator for Whitted {
                         .powf(phongexp)
             }
             out[i] = wgh
-                * (1. - matr.transmission)
-                * matr.albedo
-                * (world.ambientcolor + diffuse * core::f32::consts::FRAC_1_PI)
-                + matr.specular * specular
-                + matr.emission;
+                * ((1. - matr.transmission)
+                    * matr.albedo
+                    * (world.ambientcolor + diffuse * core::f32::consts::FRAC_1_PI)
+                    + matr.specular * specular
+                    + matr.emission);
 
             // Reflect
             const SQRT_0D15: f32 = 0.38729835;
@@ -96,7 +102,7 @@ impl Integrator for Whitted {
             // Refract
             if matr.transmission > 0. {
                 let (fresnel, refractdir) =
-                    refraction(hit.wdir, hit.norm, matr.ior, hit.wdir.dot(hit.wnorm) <= 0.);
+                    refraction(hit.wdir, hit.norm, matr.ior, hit.wnorm.dot(hit.wdir) <= 0.);
                 let reflectdir = hit.reflect();
                 children.push((
                     idx,
@@ -122,11 +128,12 @@ impl Integrator for Whitted {
 
 /// Arguments:
 /// - dir: normalized, towards surface
-/// - norm: normalized, away from object center
+/// - norm: normalized, flipped against dir
 /// - object_ior: index of refraction of object
+///
 /// Returns:
-/// - fresnel: reflection ray weight
-/// - refractdir: NaN if TIR, normalized
+/// - reflectwgh: reflection ray weight
+/// - refractdir: refraction ray direction, normalized
 #[inline]
 pub(super) fn refraction(dir: Vec3, norm: Vec3, object_ior: f32, entering: bool) -> (f32, Vec3) {
     if object_ior == MEDIUM_IOR {
@@ -139,27 +146,28 @@ pub(super) fn refraction(dir: Vec3, norm: Vec3, object_ior: f32, entering: bool)
         object_ior / MEDIUM_IOR
     };
     let k = 1.0 - eta * eta * (1.0 - ndi * ndi);
-    let sqrtk = k.sqrt();
     (
         if k < 0. {
             1. // TIR
         } else {
-            fresnel(-ndi, object_ior)
+            schlick(if entering { -ndi } else { k.sqrt() }, object_ior)
         },
-        dir.mul_add(Vec3::broadcast(eta), -(eta * ndi + sqrtk) * norm),
+        dir.mul_add(Vec3::broadcast(eta), -(eta * ndi + k.sqrt()) * norm),
     )
 }
 
 /// Arguments:
-/// - medium_cos: cosine between incident and medium-facing normal
+/// - cos: cosine between incoming and surface normal
+/// - cos (energy): half cosine between incoming and outgoing
 /// - object_ior: index of refraction of object
+///
 /// Returns:
-/// - fresnel: reflection ray weight
+/// - reflection: reflection ray weight
 #[inline]
-pub(super) const fn fresnel(medium_cos: f32, object_ior: f32) -> f32 {
+pub(super) const fn schlick(cos: f32, object_ior: f32) -> f32 {
     let f0 = (object_ior - MEDIUM_IOR) / (object_ior + MEDIUM_IOR);
     let f0 = f0 * f0;
-    let t = 1. - medium_cos;
+    let t = 1. - cos;
     let t2 = t * t;
     f0 + (1. - f0) * t2 * t2 * t
 }

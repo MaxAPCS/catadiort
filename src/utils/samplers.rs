@@ -28,7 +28,7 @@ impl AnySamplerx4 {
         let y = y.as_array_ref();
         let n = n.as_array_ref();
         Self(core::array::from_fn(|i| {
-            AnySampler::pixel(x[i] as _, y[i] as _, n[i] as _, spp, seed, sampler)
+            AnySampler::pixel(x[i], y[i], n[i], spp, seed, sampler)
         }))
     }
 
@@ -198,7 +198,7 @@ pub struct Stratified {
     seed: u64,
 
     strata: (u16, u16),
-    index: u16,
+    index: u32,
     hash: u64,
     dimension: i32,
 }
@@ -213,7 +213,7 @@ impl Sampler for Stratified {
             seed,
 
             strata: (factor, (spp / factor)),
-            index: n as _,
+            index: n,
             hash: hash3(x as _, y as _, seed),
             dimension: 0,
         };
@@ -225,7 +225,7 @@ impl Sampler for Stratified {
     #[inline]
     fn next1(&mut self) -> f32 {
         let key = low32(hash_dimension(self.hash, self.dimension));
-        let p = permutation_element(self.index as _, self.spp(), key) as f32;
+        let p = permutation_element(self.index, self.spp(), key) as f32;
         self.dimension += 1;
         ((self.rng.uniform() + p) / (self.spp() as f32)).min(ONE_MINUS_EPSILON)
     }
@@ -233,7 +233,7 @@ impl Sampler for Stratified {
     #[inline]
     fn next2(&mut self) -> Vec2 {
         let key = low32(hash_dimension(self.hash, self.dimension));
-        let p = permutation_element(self.index as _, self.spp(), key);
+        let p = permutation_element(self.index, self.spp(), key);
         self.dimension += 2;
         Vec2::new(
             ((p % self.strata.0 as u32) as f32 + self.rng.uniform()) / self.strata.0 as f32,
@@ -257,7 +257,7 @@ impl Stratified {
 
 #[derive(Clone)]
 pub struct Halton {
-    index: u16,
+    index: u32,
     hash: u64,
     dimension: i32,
 }
@@ -267,7 +267,7 @@ impl Sampler for Halton {
         Self: Sized,
     {
         Self {
-            index: n as _,
+            index: n,
             hash: hash3(x as _, y as _, seed),
             dimension: 0,
         }
@@ -293,12 +293,12 @@ impl Sampler for Halton {
 impl Halton {
     fn dim(&self) -> f32 {
         let h = hash_dimension(self.hash, self.dimension);
-        if self.dimension & 1 == 0 {
-            fixed_to_float(owen_scramble((self.index as u32).reverse_bits(), low32(h)))
+        if self.dimension == 0 {
+            fixed_to_float(owen_scramble(self.index.reverse_bits(), low32(h)))
         } else {
             owen_scrambled_radical_inverse(
-                PRIME_TABLE[(self.dimension % 1024).cast_unsigned() as usize],
-                self.index as _,
+                PRIME_TABLE[(self.dimension % 1024) as usize],
+                self.index,
                 h,
             )
         }
@@ -307,7 +307,7 @@ impl Halton {
 
 #[derive(Clone)]
 pub struct Sobol {
-    index: u16,
+    index: u32,
     hash: u64,
     dimension: i32,
 }
@@ -317,7 +317,7 @@ impl Sampler for Sobol {
         Self: Sized,
     {
         Self {
-            index: n as _,
+            index: n,
             hash: hash3(x as _, y as _, seed),
             dimension: 0,
         }
@@ -339,17 +339,13 @@ impl Sampler for Sobol {
 
     #[inline]
     fn skip(&mut self, n: u64) {
-        for _ in 0..n / 2 {
-            // todo is this even right idk???
-            self.next2();
-        }
+        self.dimension += (n as i32) & !1;
     }
 }
 impl Sobol {
-    fn dim(&mut self) -> Vec2 {
+    fn dim(&self) -> Vec2 {
         let h = hash_dimension(self.hash, self.dimension);
         let i = owen_scramble(self.index as _, low32(h));
-        self.index = i as _;
         Vec2::new(
             fixed_to_float(owen_scramble(i.reverse_bits(), high32(h))),
             fixed_to_float(owen_scramble(sobol2(i), low32(mix64(h)))),

@@ -5,12 +5,25 @@
 //! cosine (and the lobe its exponent). The caller checks the support.
 //! Until you write a warp, it stops the program when called.
 
-use ultraviolet::{Rotor3, Vec2, Vec2x4, Vec3, Vec3x4};
+use ultraviolet::{Vec2, Vec2x4, Vec3, Vec3x4};
 use wide::{CmpEq, CmpGt, f32x4};
 
 #[inline]
-pub fn recenter(x: Vec3, center: Vec3) -> Vec3 {
-    x.rotated_by(Rotor3::from_rotation_between(Vec3::unit_z(), center))
+pub fn recenter(sample: Vec3, center: Vec3) -> Vec3 {
+    let basis = orthonormal_basis(center);
+    (sample.x * basis.0 + sample.y * basis.1 + sample.z * basis.2).normalized()
+}
+
+#[inline]
+pub fn orthonormal_basis(n: Vec3) -> (Vec3, Vec3, Vec3) {
+    let a = if n.x.abs() < 0.9 {
+        Vec3::unit_x()
+    } else {
+        Vec3::unit_y()
+    };
+    let t = a.cross(n).normalized();
+    let b = n.cross(t);
+    (t, b, n)
 }
 
 /// A point in the unit disk, (x, y, 0), by Shirley and Chiu's concentric
@@ -204,15 +217,4 @@ pub mod test {
         }
         0
     }
-}
-
-#[inline]
-pub fn orthonormal_basis(n: Vec3) -> (Vec3, Vec3) {
-    let sign = 1f32.copysign(n.z);
-    let a = -1. / (sign + n.z);
-    let b = n.x * n.y * a;
-    (
-        Vec3::new(1. + sign * n.x * n.x * a, sign * b, -sign * n.x),
-        Vec3::new(b, sign + n.y * n.y * a, -n.y),
-    )
 }

@@ -27,8 +27,7 @@ impl Light for SphereLight {
         if wrad * wrad < wdstsq {
             let one_minus_cos_theta_max = ratio / (1. + (1. - ratio).sqrt());
             let wsdir =
-                warp::recenter(warp::sample_uniform_cone(uv, one_minus_cos_theta_max), wdir)
-                    .normalized();
+                warp::recenter(warp::sample_uniform_cone(uv, one_minus_cos_theta_max), wdir);
 
             let mut ray = ray::ShadowRay::new(wpos, wsdir, f32::INFINITY, Vec3::one());
             self.0.obstruct(&mut ray, u16::MAX);
@@ -44,7 +43,7 @@ impl Light for SphereLight {
         } else {
             let rho = wrad * uv.x.sqrt();
             let (sphi, cphi) = (2. * core::f32::consts::PI * uv.y).sin_cos();
-            let (t, b) = warp::orthonormal_basis(-wdir);
+            let (t, b, _) = warp::orthonormal_basis(-wdir);
             let wsend = wcen + t * (rho * cphi) + b * (rho * sphi);
 
             let wsdir = wsend - wpos;

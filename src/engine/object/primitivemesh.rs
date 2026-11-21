@@ -212,6 +212,9 @@ impl Mesh {
 
         let mut out = [u32::MAX; 4];
         for i in 0..4 {
+            if t[i].is_nan() {
+                continue;
+            }
             let mut ctx = RtShadeContext::new(
                 &self.cutoutparams,
                 wpos[i],
