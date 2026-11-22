@@ -14,7 +14,7 @@ pub(crate) const MEDIUM_IOR: f32 = 1.0;
 
 pub(crate) struct World {
     pub directionallights: Vec<object::DirectionalLight>,
-    meshlights: Vec<Option<object::MeshEmissive>>,
+    meshlights: Vec<(u64, Option<object::MeshLight>)>,
     pub pointlights: Vec<object::PointLight>,
     spherelights: Vec<object::SphereLight>,
     pub spotlights: Vec<object::SpotLight>,
@@ -98,21 +98,13 @@ impl World {
         material: Arc<Material>,
         triangles: Box<[object::Tri]>,
     ) {
-        let prop = material.prop;
-        let meshref = object::MeshReference {
+        self.meshinstances.push(object::MeshReference {
             owtrans,
             cutout,
             cutoutparams,
             material,
             triref: self.meshtris.len(),
-        };
-        self.meshlights.push(object::from_emissive(
-            &triangles,
-            owtrans,
-            &prop,
-            object::MeshLight::emissive_create(&triangles, &meshref),
-        ));
-        self.meshinstances.push(meshref);
+        });
         self.meshtris.push((hash, triangles));
     }
 
@@ -127,29 +119,34 @@ impl World {
         let Some(triref) = self.meshtris.iter().position(|mt| mt.0 == hash) else {
             return false;
         };
-        let prop = material.prop;
-        let meshref = object::MeshReference {
+        self.meshinstances.push(object::MeshReference {
             owtrans,
             cutout,
             cutoutparams,
             material,
             triref,
-        };
-        self.meshlights.push(object::from_emissive(
-            &self.meshtris[triref].1,
-            owtrans,
-            &prop,
-            object::MeshLight::emissive_instance(
-                self.meshlights[triref].as_ref().map(|l| &l.0),
-                &meshref,
-            ),
-        ));
-        self.meshinstances.push(meshref);
+        });
         true
     }
 
-    /// Build acceleration structures, emissive standins
+    /// Build acceleration structures, emissive lights
     pub fn finish(&mut self) {
+        for meshref in &self.meshinstances {
+            let (hash, triangles) = &self.meshtris[meshref.triref];
+            match self.meshlights.iter().position(|ml| ml.0 == *hash) {
+                Some(instance) if let Some(instance) = self.meshlights[instance].1.as_ref() => {
+                    self.meshlights.push((
+                        *hash,
+                        object::MeshLight::emissive_instance(Some(instance), &meshref),
+                    ))
+                }
+                _ => self.meshlights.push((
+                    *hash,
+                    object::MeshLight::emissive_create(&triangles, &meshref),
+                )),
+            };
+        }
+
         #[cfg(not(feature = "bvh"))]
         let tris: Vec<Arc<[_]>> = self.meshtris.drain(..).map(|(_, m)| Arc::from(m)).collect();
         #[cfg(feature = "bvh")]
@@ -184,7 +181,7 @@ impl World {
         }
         self.meshlights = core::mem::take(&mut self.meshlights)
             .into_iter()
-            .filter(|l| l.is_some())
+            .filter(|l| l.1.is_some())
             .collect();
     }
 
@@ -211,7 +208,7 @@ impl World {
         }
     }
 
-    pub(super) fn obstruct(&self, ray: &mut ray::ShadowRay, depth: u16) {
+    pub(super) fn obstruct(&self, ray: &mut ray::LightRay, depth: u16) {
         #[cfg(not(feature = "bvh"))]
         {
             for s in &self.spheres {
@@ -232,20 +229,18 @@ impl World {
                 .expect("World::obstruct called before World::finish")
                 .obstruct(ray, depth);
         }
-        ray.collapse();
     }
 
     // whittedism
-    pub(super) fn shadowrays(&self, point: Vec3) -> impl Iterator<Item = ray::ShadowRay> {
+    pub(super) fn shadowrays(&self, point: Vec3) -> impl Iterator<Item = ray::LightRay> {
         let nanuv = Vec2::broadcast(f32::NAN);
         core::iter::chain(
             core::iter::chain(
                 self.pointlights.iter().map(move |l| l.rayto(point, nanuv)),
                 core::iter::chain(
                     self.meshlights.iter().map(move |l| {
-                        l.as_ref()
+                        l.1.as_ref()
                             .expect("World::shadowrays called before World::finish")
-                            .1
                             .rayto(point, nanuv)
                     }),
                     self.spherelights.iter().map(move |l| l.rayto(point, nanuv)),
@@ -265,7 +260,7 @@ impl World {
         point: &Vec3,
         uv: &mut samplers::AnySampler,
         samples: u16,
-    ) -> Vec<(ray::ShadowRay, f32)> {
+    ) -> Vec<(ray::LightRay, f32)> {
         let mut out = Vec::with_capacity(
             self.pointlights.len()
                 + self.meshlights.len() * samples as usize
@@ -278,11 +273,16 @@ impl World {
         for l in self.pointlights.iter() {
             out.push((l.rayto(*point, uv.next2()), l.cos_angular_radius(*point)));
         }
+        for l in self.spotlights.iter() {
+            out.push((l.rayto(*point, uv.next2()), l.cos_angular_radius(*point)));
+        }
+        for l in self.directionallights.iter() {
+            out.push((l.rayto(*point, uv.next2()), l.cos_angular_radius(*point)));
+        }
         for l in self.meshlights.iter() {
-            let l = &l
-                .as_ref()
-                .expect("World::lightrays called before World::finish")
-                .0;
+            let l =
+                &l.1.as_ref()
+                    .expect("World::lightrays called before World::finish");
             let c = l.cos_angular_radius(*point);
             let sample = uv.next2();
             for i in 0..m {
@@ -291,14 +291,10 @@ impl World {
                         ((i as f32 + sample.x) / m as f32).min(1.),
                         ((j as f32 + sample.y) / n as f32).min(1.),
                     );
-                    let mut r = l.rayto(*point, uv);
-                    r.irradiance *= invsamp;
+                    let r = l.rayto(*point, uv) * invsamp;
                     out.push((r, c));
                 }
             }
-        }
-        for l in self.directionallights.iter() {
-            out.push((l.rayto(*point, uv.next2()), l.cos_angular_radius(*point)));
         }
         for l in self.spherelights.iter() {
             let c = l.cos_angular_radius(*point);
@@ -309,14 +305,10 @@ impl World {
                         ((i as f32 + sample.x) / m as f32).min(1.),
                         ((j as f32 + sample.y) / n as f32).min(1.),
                     );
-                    let mut r = l.rayto(*point, uv);
-                    r.irradiance *= invsamp;
+                    let r = l.rayto(*point, uv) * invsamp;
                     out.push((r, c));
                 }
             }
-        }
-        for l in self.spotlights.iter() {
-            out.push((l.rayto(*point, uv.next2()), l.cos_angular_radius(*point)));
         }
         out
     }

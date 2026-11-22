@@ -1,6 +1,6 @@
 use std::sync::Arc;
 use ultraviolet::{Mat4, Vec3, Vec3x4};
-use wide::{CmpLe, f32x4, u32x4};
+use wide::{CmpLe, CmpLt, f32x4};
 
 use super::{Material, wider};
 use crate::{
@@ -8,19 +8,16 @@ use crate::{
     utils::samplers::AnySamplerx4,
 };
 
-const DEPTH_COMPLEXITY: usize = 2;
-
 pub(super) struct Rayx4 {
     /// Worldspace Ray Origin
     pub pos: Vec3x4,
     /// Worldspace Ray Direction
     pub dir: Vec3x4,
-    /// Furthest hit
-    pub max_t: f32x4,
+    /// Hit Record (always flattened)
+    pub hits: smallvec::SmallVec<[Hitx4; 1]>,
 
+    // cookism
     pub sampler: AnySamplerx4,
-
-    pub hits: smallvec::SmallVec<[Hitx4; DEPTH_COMPLEXITY]>, // only for PrimitiveMesh
 }
 
 impl Rayx4 {
@@ -29,9 +26,8 @@ impl Rayx4 {
         Self {
             pos,
             dir,
-            max_t: f32x4::new([f32::INFINITY; _]),
-            sampler,
             hits: smallvec::SmallVec::new_const(),
+            sampler,
         }
     }
 
@@ -40,41 +36,58 @@ impl Rayx4 {
         Self {
             pos: wider::transform_pointx4(trans, &self.pos),
             dir: wider::transform_vecx4(trans, self.dir),
-            max_t: self.max_t,
-            sampler: self.sampler.clone(),
             hits: smallvec::SmallVec::new_const(),
+            sampler: self.sampler.clone(),
         }
     }
 
     #[inline]
-    pub fn push(&mut self, hit: Hitx4) {
-        self.max_t = self.max_t.min(hit.t);
-        for i in (0..self.hits.len()).rev() {
-            if self.hits[i].t.cmp_le(self.max_t).none() {
-                self.hits.remove(i);
-            }
+    /// Get front hit mask (fast-path)
+    ///
+    /// If hits are pre-cutout, this doesn't help
+    pub fn mask(&self, t: f32x4) -> f32x4 {
+        if self.hits.len() == 1 {
+            let max_t = self.hits.last().unwrap().t;
+            return max_t.is_nan() | t.cmp_lt(max_t);
         }
-        self.hits.push(hit);
+        !t.is_nan()
     }
 
     #[inline]
-    /// Collapse hits combining each lane's by distance
-    pub fn collapse(&mut self) {
+    /// Apply hit to front (fast-path)
+    ///
+    /// If hits are pre-cutout, use the slow path: `.hits.push()`
+    pub fn hit(&mut self, hit: Hitx4) {
+        match self.hits.last_mut() {
+            Some(lhit) => lhit.apply(hit),
+            None => self.hits.push(hit),
+        }
+    }
+
+    #[inline]
+    /// Collapse and pop hit from front
+    pub fn get(mut self) -> Option<Hitx4> {
         let Some(mut hit) = self.hits.pop() else {
-            return;
+            return None;
         };
-        for nhit in core::mem::take(&mut self.hits) {
-            hit.collapse(nhit);
+        for nhit in self.hits {
+            hit.apply(nhit);
         }
-        self.hits.push(hit);
+        Some(hit)
     }
+}
 
-    #[inline]
-    /// Get hits from front of every lane
-    pub fn get(&mut self) -> Option<Hitx4> {
-        debug_assert!(self.hits.len() <= 1);
-        self.hits.pop()
-    }
+pub(super) struct LightRay {
+    /// Worldspace Ray Origin
+    pub pos: Vec3,
+    /// Worldspace Ray Direction
+    pub dir: Vec3,
+    /// Maximum Hit Time (exclusive)
+    pub max_t: f32,
+    /// ( N_j * L_jk * S_jk * p_jk )
+    irradiance: Vec3,
+    /// slow-path pre-cutout hits
+    pub hits: Vec<Hit>,
 }
 
 macro_rules! material {
@@ -83,6 +96,87 @@ macro_rules! material {
             .as_deref()
             .unwrap_or(const { &Material::default() })
     };
+}
+
+impl LightRay {
+    #[inline]
+    pub const fn new(pos: Vec3, dir: Vec3, max_t: f32, irradiance: Vec3) -> Self {
+        Self {
+            pos,
+            dir,
+            max_t,
+            irradiance,
+            hits: Vec::new(),
+        }
+    }
+
+    #[inline]
+    pub const fn empty() -> Self {
+        Self {
+            pos: Vec3::broadcast(f32::NAN),
+            dir: Vec3::broadcast(f32::NAN),
+            max_t: f32::NAN,
+            irradiance: Vec3::broadcast(0.),
+            hits: Vec::new(),
+        }
+    }
+
+    #[inline]
+    pub fn transformed(&self, trans: &Mat4) -> Self {
+        Self {
+            pos: trans.transform_point3(self.pos),
+            dir: trans.transform_vec3(self.dir),
+            max_t: self.max_t,
+            irradiance: self.irradiance,
+            hits: Vec::new(),
+        }
+    }
+
+    #[inline]
+    /// Get ray obstruction (fast-path)
+    ///
+    /// If hits are pre-cutout, this doesn't help
+    pub fn occluded(&self) -> bool {
+        self.irradiance.x <= 0. && self.irradiance.y <= 0. && self.irradiance.z <= 0.
+    }
+
+    #[inline]
+    /// Apply hit to irradiance (fast-path)
+    ///
+    /// If hits are pre-cutout, use the slow path: `.hits.push()`
+    #[allow(unused_variables)]
+    pub fn hit(&mut self, material: &Material) {
+        #[cfg(feature = "shadow_tint")]
+        {
+            self.irradiance *= material.prop.albedo * material.prop.transmission;
+        }
+        #[cfg(not(feature = "shadow_tint"))]
+        {
+            self.irradiance = Vec3::zero();
+        }
+    }
+
+    #[inline]
+    /// Collapse and pop irradiance
+    pub fn get(mut self) -> Vec3 {
+        for hit in &self.hits {
+            let matr = material!(hit.material).prop;
+            self.irradiance *= matr.albedo * matr.transmission;
+            if self.occluded() {
+                break;
+            }
+        }
+        self.irradiance
+    }
+}
+
+impl core::ops::Mul<f32> for LightRay {
+    type Output = Self;
+
+    fn mul(mut self, rhs: f32) -> Self::Output {
+        self.irradiance *= rhs;
+        self
+    }
 }
 
 pub(super) struct Hitx4 {
@@ -108,7 +202,7 @@ pub(super) struct Hitx4 {
 }
 
 impl Hitx4 {
-    fn collapse(&mut self, mut other: Self) {
+    fn apply(&mut self, mut other: Self) {
         let me = (!self.t.is_nan()) & (other.t.is_nan() | self.t.cmp_le(other.t));
 
         self.opos = Vec3x4::blend(me, self.opos, other.opos);
@@ -124,22 +218,15 @@ impl Hitx4 {
         );
         self.color = Vec3x4::blend(me, self.color, other.color);
 
-        let me: u32x4 = bytemuck::cast(me);
-        let me = me.as_array_ref();
+        let me: [u32; 4] = bytemuck::cast(me);
         for i in 0..4 {
             if me[i] == 0 {
                 core::mem::swap(&mut self.material[i], &mut other.material[i]);
             }
         }
     }
-
-    // #[inline]
-    // pub fn reflect(&self) -> Vec3x4 {
-    //     self.wdir.reflected(self.norm)
-    // }
 }
 
-#[derive(Default)]
 pub(super) struct Hit {
     /// Objectspace Hit Position
     pub opos: Vec3,
@@ -160,41 +247,6 @@ pub(super) struct Hit {
     pub color: Vec3,
     /// Shading Material
     pub material: Option<Arc<Material>>,
-}
-
-impl Hit {
-    pub fn shade(&self, depth: u16) -> (Vec3, RtMaterial) {
-        let material = material!(self.material);
-        let mut matr = material.prop;
-        if !self.color.x.is_nan() {
-            matr.albedo = self.color;
-        };
-        if self.t.is_nan() {
-            return (self.norm, matr);
-        }
-        let Some(shader) = material.shader else {
-            return (self.norm, matr);
-        };
-        let mut ctx = RtShadeContext::new(
-            &material.shaderparams,
-            self.wpos,
-            self.wdir,
-            self.wnorm,
-            self.t,
-            self.opos,
-            self.norm,
-            self.uv,
-            depth,
-            matr,
-        );
-        unsafe { shader(&mut ctx) };
-        (ctx.N, ctx.m)
-    }
-
-    #[inline]
-    pub fn reflect(&self) -> Vec3 {
-        self.wdir.reflected(self.norm)
-    }
 }
 
 impl Into<[Hit; 4]> for Hitx4 {
@@ -254,54 +306,32 @@ impl From<[Hit; 4]> for Hitx4 {
     }
 }
 
-pub(super) struct ShadowRay {
-    /// Worldspace Ray Origin
-    pub pos: Vec3,
-    /// Worldspace Ray Direction
-    pub dir: Vec3,
-    /// Maximum Hit Time (exclusive)
-    pub max_t: f32,
-    /// ( N_j * L_jk * S_jk * p_jk )
-    pub irradiance: Vec3,
-    pub hits: smallvec::SmallVec<[Hit; DEPTH_COMPLEXITY]>,
-}
-
-impl ShadowRay {
-    #[inline]
-    pub const fn new(pos: Vec3, dir: Vec3, max_t: f32, irradiance: Vec3) -> Self {
-        Self {
-            pos,
-            dir,
-            max_t,
-            irradiance,
-            hits: smallvec::SmallVec::new_const(),
+impl Hit {
+    pub fn shade(&self, depth: u16) -> (Vec3, RtMaterial) {
+        let material = material!(self.material);
+        let mut matr = material.prop;
+        if !self.color.x.is_nan() {
+            matr.albedo = self.color;
+        };
+        if self.t.is_nan() {
+            return (self.norm, matr);
         }
-    }
-
-    #[inline]
-    pub const fn empty() -> Self {
-        Self {
-            pos: Vec3::broadcast(f32::NAN),
-            dir: Vec3::broadcast(f32::NAN),
-            max_t: f32::NAN,
-            irradiance: Vec3::broadcast(0.),
-            hits: smallvec::SmallVec::new_const(),
-        }
-    }
-
-    #[inline]
-    pub fn collapse(&mut self) {
-        for hit in core::mem::take(&mut self.hits) {
-            let material = material!(hit.material);
-            self.irradiance *= material.prop.albedo * material.prop.transmission;
-            if self.obstructed() {
-                break;
-            }
-        }
-    }
-
-    #[inline]
-    pub fn obstructed(&self) -> bool {
-        self.irradiance.x <= 0. && self.irradiance.y <= 0. && self.irradiance.z <= 0.
+        let Some(shader) = material.shader else {
+            return (self.norm, matr);
+        };
+        let mut ctx = RtShadeContext::new(
+            &material.shaderparams,
+            self.wpos,
+            self.wdir,
+            self.wnorm,
+            self.t,
+            self.opos,
+            self.norm,
+            self.uv,
+            depth,
+            matr,
+        );
+        unsafe { shader(&mut ctx) };
+        (ctx.N, ctx.m)
     }
 }

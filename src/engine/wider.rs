@@ -1,10 +1,10 @@
 use ultraviolet::{DVec3x4, DVec4x4, Mat4, Vec3, Vec3x4, Vec4x4};
-use wide::{f32x4, f64x4, i32x4, u32x4};
+use wide::{f32x4, f64x4, u32x4};
 
 #[allow(non_upper_case_globals)]
 pub const f32x4_NAN: f32x4 = f32x4::new([f32::NAN; _]);
 
-#[cfg(feature = "gaussian_weights")]
+#[cfg(feature = "gaussian_mix")]
 pub fn gaussian_weights(size: usize) -> Box<[f32]> {
     if size == 0 {
         return Box::new([1.]);
@@ -111,7 +111,7 @@ pub fn copysign(vec: Vec3, sign: Vec3) -> Vec3 {
 
 #[inline]
 pub fn cast_f32x4(a: u32x4) -> f32x4 {
-    f32x4::from_i32x4(bytemuck::cast::<u32x4, i32x4>(a))
+    f32x4::from_i32x4(bytemuck::cast(a))
 }
 
 #[inline]

@@ -115,13 +115,8 @@ impl Primitive for Mesh {
         self.wotrans.inversed().transform_point3(ocenter)
     }
 
-    fn obstruct(&self, ray: &mut ray::ShadowRay, depth: u16) {
-        let mut oray = ray::ShadowRay::new(
-            self.wotrans.transform_point3(ray.pos),
-            self.wotrans.transform_vec3(ray.dir),
-            ray.max_t,
-            ray.irradiance,
-        );
+    fn obstruct(&self, ray: &mut ray::LightRay, depth: u16) {
+        let mut oray = ray.transformed(&self.wotrans);
         #[cfg(not(feature = "bvh"))]
         {
             for triangle in self.tris.as_ref() {
@@ -142,7 +137,7 @@ impl Primitive for Mesh {
             if !self.cutout(&hit, depth) {
                 continue;
             }
-            ray.hits.push(hit);
+            ray.hit(&self.material);
         }
     }
 
@@ -169,8 +164,9 @@ impl Primitive for Mesh {
             if hit.t.is_nan().all() {
                 continue;
             }
-            ray.push(hit);
+            ray.hit(hit);
         }
+        ray.sampler = oray.sampler;
     }
 }
 
@@ -268,20 +264,6 @@ impl Mesh {
             .collect()
     }
 
-    pub fn tricentroid(triangles: &[Tri]) -> Vec3 {
-        let (numer, denom) = triangles
-            .par_iter()
-            .fold(
-                || (Vec3::zero(), 0.),
-                |(numer, denom), tri| {
-                    let area = tri.operp().mag();
-                    (numer + tri.centroid() * area, denom + area)
-                },
-            )
-            .reduce(|| (Vec3::zero(), 0.), |a, b| (a.0 + b.0, a.1 + b.1));
-        numer / denom
-    }
-
     pub fn triextent(triangles: &[Tri], center: Vec3) -> f32 {
         triangles
             .par_iter()
@@ -359,7 +341,7 @@ impl Primitive for Tri {
         self.o + (self.e1 + self.e2) / 3.
     }
 
-    fn obstruct(&self, ray: &mut ray::ShadowRay, _: u16) {
+    fn obstruct(&self, ray: &mut ray::LightRay, _: u16) {
         let ray_cross_e2 = ray.dir.cross(self.e2);
         let det = self.e1.dot(ray_cross_e2);
         // no epsilon- shadows can be a little bigger, who cares
@@ -384,7 +366,7 @@ impl Primitive for Tri {
         if t <= 0. || t >= ray.max_t {
             return;
         }
-
+        // Slow Path: pre-cutout
         ray.hits.push(self.hit(ray.pos, ray.dir, t, (u, v)))
     }
 
@@ -425,6 +407,7 @@ impl Primitive for Tri {
 
         let uv = (wider::cast_f32(u), wider::cast_f32(v));
         let onorm = Vec3x4::splat(self.onorm);
+        // Slow Path: pre-cutout
         ray.hits.push(ray::Hitx4 {
             opos: Vec3x4::broadcast(wider::f32x4_NAN),
             wpos: wider::cast_s(rwpos + rwdir * t),

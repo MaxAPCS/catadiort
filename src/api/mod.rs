@@ -46,7 +46,7 @@ pub struct RtMaterial {
 
 impl RtMaterial {
     /// The default material: albedo 0.8, no specular, roughness 0.5, opaque, ior 1.5, no emission.
-    pub const fn default_material() -> RtMaterial {
+    pub const fn default() -> RtMaterial {
         RtMaterial {
             albedo: Vec3::broadcast(0.8),
             specular: Vec3::broadcast(0.),
@@ -56,5 +56,11 @@ impl RtMaterial {
             ior: 1.5,
             emission: Vec3::broadcast(0.),
         }
+    }
+}
+
+impl Default for RtMaterial {
+    fn default() -> Self {
+        Self::default()
     }
 }

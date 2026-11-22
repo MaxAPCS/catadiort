@@ -1,7 +1,7 @@
 use ultraviolet::{Vec2, Vec3};
 
 use super::Light;
-use crate::engine::ray::ShadowRay;
+use crate::engine::ray::LightRay;
 
 pub struct DirectionalLight {
     pub dir: Vec3,
@@ -10,7 +10,7 @@ pub struct DirectionalLight {
 
 impl Light for DirectionalLight {
     #[inline]
-    fn rayto(&self, pos: Vec3, _: Vec2) -> ShadowRay {
-        ShadowRay::new(pos, -self.dir, f32::INFINITY, self.irradiance)
+    fn rayto(&self, pos: Vec3, _: Vec2) -> LightRay {
+        LightRay::new(pos, -self.dir, f32::INFINITY, self.irradiance)
     }
 }

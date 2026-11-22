@@ -5,7 +5,7 @@ use rayon::iter::{IntoParallelRefMutIterator, ParallelIterator};
 use smallvec::SmallVec;
 use std::sync::LazyLock;
 use ultraviolet::Vec3;
-use wide::{CmpGe, CmpLe, CmpLt, f32x4};
+use wide::{CmpGe, CmpLe, f32x4};
 
 use super::{Primitive, ray};
 use crate::{engine::wider, options::OPTIONS};
@@ -97,7 +97,7 @@ impl<P: Primitive> Primitive for BVH<P> {
             .map_or(Vec3::broadcast(f32::NAN), |n| n.bounds.centroid())
     }
 
-    fn obstruct(&self, ray: &mut ray::ShadowRay, depth: u16) {
+    fn obstruct(&self, ray: &mut ray::LightRay, depth: u16) {
         if self.nodes.is_empty() {
             return;
         }
@@ -113,6 +113,9 @@ impl<P: Primitive> Primitive for BVH<P> {
                     let start = start as usize;
                     for prim in &self.primitives[start..start + len.get() as usize] {
                         prim.obstruct(ray, depth);
+                        if ray.occluded() {
+                            return;
+                        }
                     }
                 }
                 NodeKind::Internal { rgh, .. } => {
@@ -132,8 +135,8 @@ impl<P: Primitive> Primitive for BVH<P> {
         while let Some(idx) = stack.pop() {
             let node = &self.nodes[idx as usize];
             let ixt = node.bounds.intersectx4(rays);
-            if ixt.cmp_lt(rays.max_t).none() {
-                continue; // culls before cutout filtering; theoretically incorrect
+            if rays.mask(ixt).none() {
+                continue;
             }
             match node.kind {
                 NodeKind::Leaf { start, len } => {
@@ -196,7 +199,7 @@ impl From<usize> for Axis {
 }
 
 impl Bounds {
-    fn intersect(&self, ray: &ray::ShadowRay) -> bool {
+    fn intersect(&self, ray: &ray::LightRay) -> bool {
         let (mut 近, mut 远) = (f32::NEG_INFINITY, f32::INFINITY);
         for axis in 0..3 {
             let tl = (self.min[axis] - ray.pos[axis]) / ray.dir[axis];

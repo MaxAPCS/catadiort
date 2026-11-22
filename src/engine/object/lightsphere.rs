@@ -7,7 +7,7 @@ use crate::utils::warp;
 pub struct SphereLight(Sphere, PointLight);
 
 impl Light for SphereLight {
-    fn rayto(&self, wpos: Vec3, uv: Vec2) -> ray::ShadowRay {
+    fn rayto(&self, wpos: Vec3, uv: Vec2) -> ray::LightRay {
         if uv.x.is_nan() {
             return self.1.rayto(wpos, uv);
         }
@@ -16,7 +16,7 @@ impl Light for SphereLight {
         let wdir = wcen - wpos;
         let wdstsq = wdir.mag_sq();
         if wdstsq == 0. {
-            return ray::ShadowRay::empty();
+            return ray::LightRay::empty();
         }
 
         let wrad = self.0.extract_avg_scale();
@@ -29,17 +29,17 @@ impl Light for SphereLight {
             let wsdir =
                 warp::recenter(warp::sample_uniform_cone(uv, one_minus_cos_theta_max), wdir);
 
-            let mut ray = ray::ShadowRay::new(wpos, wsdir, f32::INFINITY, Vec3::one());
+            let mut ray = ray::LightRay::new(wpos, wsdir, f32::INFINITY, Vec3::one());
             self.0.obstruct(&mut ray, u16::MAX);
             if ray.hits.is_empty() {
-                return ray::ShadowRay::empty();
+                return ray::LightRay::empty();
             };
             let hit = ray.hits.swap_remove(0);
 
             let (_, matr) = hit.shade(1); // todo use source depth + 1
 
             let density_inv = warp::uniform_cone_pdf(one_minus_cos_theta_max).recip();
-            ray::ShadowRay::new(wpos, wsdir, hit.t, matr.emission * density_inv)
+            ray::LightRay::new(wpos, wsdir, hit.t, matr.emission * density_inv)
         } else {
             let rho = wrad * uv.x.sqrt();
             let (sphi, cphi) = (2. * core::f32::consts::PI * uv.y).sin_cos();
@@ -52,7 +52,7 @@ impl Light for SphereLight {
             let wsdir = wsdir / wsdst;
 
             let scale = core::f32::consts::PI * (wdst / wsdst) * (wdstsq + wrad * wrad) / wsdstsq;
-            ray::ShadowRay::new(wpos, wsdir, wsdst, self.0.material.prop.emission * scale)
+            ray::LightRay::new(wpos, wsdir, wsdst, self.0.material.prop.emission * scale)
         }
     }
 

@@ -12,18 +12,19 @@ impl Integrator for Whitted {
     fn integrate(
         &self,
         world: &World,
-        idxs: &[u32; 4],
+        idxs: [u32; 4],
         wghs: Vec3x4,
-        rays: &mut ray::Rayx4,
+        rays: ray::Rayx4,
         depth: u16,
     ) -> (
         ([u32; 4], [Vec3; 4]),
         smallvec::SmallVec<[(u32, Vec3, Vec3, Vec3, samplers::AnySampler); 8]>,
     ) {
         let mut children = smallvec::SmallVec::new();
+        let rwdir = rays.dir;
         let Some(hits) = rays.get() else {
             return (
-                (*idxs, (wghs * world.sample_environmentx4(rays.dir)).into()),
+                (idxs, (wghs * world.sample_environmentx4(rwdir)).into()),
                 children,
             );
         };
@@ -52,8 +53,8 @@ impl Integrator for Whitted {
             let phongexp = (2. / (alpha * alpha) - 2.).max(1.);
             let mut diffuse = Vec3::zero();
             let mut specular = Vec3::zero();
-            let shadowrays = world.shadowrays(hit.wpos).filter_map(|mut sr| {
-                if sr.obstructed() || hit.norm.dot(sr.dir) <= 0.0 {
+            let neerays = world.shadowrays(hit.wpos).filter_map(|mut sr| {
+                if sr.occluded() || hit.norm.dot(sr.dir) <= 0.0 {
                     return None;
                 }
                 let lpos = sr.pos + sr.dir * sr.max_t;
@@ -65,13 +66,14 @@ impl Integrator for Whitted {
                     sr.max_t = ldst - RECAST_EPSILON;
                 }
                 world.obstruct(&mut sr, u16::MAX);
-                if sr.obstructed() { None } else { Some(sr) }
+                if sr.occluded() { None } else { Some(sr) }
             });
-            for shadowray in shadowrays {
-                diffuse += shadowray.irradiance * shadowray.dir.dot(hit.norm).max(0.);
-                specular += shadowray.irradiance
-                    * shadowray
-                        .dir
+            for nr in neerays {
+                let nwdir = nr.dir;
+                let nirradiance = nr.get();
+                diffuse += nirradiance * nwdir.dot(hit.norm).max(0.);
+                specular += nirradiance
+                    * nwdir
                         .reflected(hit.norm)
                         .dot(hit.wdir)
                         .max(0.)
@@ -88,7 +90,7 @@ impl Integrator for Whitted {
             const SQRT_0D15: f32 = 0.38729835;
             const RECIP_0D15: f32 = 0.15f32.recip();
             if matr.transmission == 0. && matr.roughness < SQRT_0D15 && matr.specs() {
-                let reflectdir = hit.reflect();
+                let reflectdir = hit.wdir.reflected(hit.norm);
                 children.push((
                     idx,
                     wgh * matr.specular
@@ -103,7 +105,7 @@ impl Integrator for Whitted {
             if matr.transmission > 0. {
                 let (fresnel, refractdir) =
                     refraction(hit.wdir, hit.norm, matr.ior, hit.wnorm.dot(hit.wdir) <= 0.);
-                let reflectdir = hit.reflect();
+                let reflectdir = hit.wdir.reflected(hit.norm);
                 children.push((
                     idx,
                     wgh * matr.specular * fresnel,
@@ -122,7 +124,7 @@ impl Integrator for Whitted {
                 }
             }
         }
-        ((*idxs, out), children)
+        ((idxs, out), children)
     }
 }
 

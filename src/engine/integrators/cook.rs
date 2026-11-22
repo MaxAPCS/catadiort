@@ -15,18 +15,20 @@ impl Integrator for Cook {
     fn integrate(
         &self,
         world: &World,
-        idxs: &[u32; 4],
+        idxs: [u32; 4],
         wghs: Vec3x4,
-        rays: &mut ray::Rayx4,
+        mut rays: ray::Rayx4,
         depth: u16,
     ) -> (
         ([u32; 4], [Vec3; 4]),
         smallvec::SmallVec<[(u32, Vec3, Vec3, Vec3, samplers::AnySampler); 8]>,
     ) {
         let mut children = smallvec::SmallVec::new();
+        let rwdir = rays.dir;
+        let mut samplers: [_; 4] = core::mem::take(&mut rays.sampler).into();
         let Some(hits) = rays.get() else {
             return (
-                (*idxs, (wghs * world.sample_environmentx4(rays.dir)).into()),
+                (idxs, (wghs * world.sample_environmentx4(rwdir)).into()),
                 children,
             );
         };
@@ -34,7 +36,6 @@ impl Integrator for Cook {
         let mut out = [Vec3::zero(); 4];
         let wghs: [_; 4] = wghs.into();
         let hits: [_; 4] = hits.into();
-        let mut samplers: [_; 4] = core::mem::take(&mut rays.sampler).into();
         for (i, mut hit) in hits.into_iter().enumerate() {
             let idx = idxs[i];
             let wgh = wghs[i];
@@ -62,7 +63,7 @@ impl Integrator for Cook {
             let wnormf = wider::copysign(hit.wnorm, -hit.wdir);
 
             // Sample RNG
-            let lightrays = world.lightrays(&hit.wpos, &mut samplers[i], self.lightsamples);
+            let neerays = world.lightrays(&hit.wpos, &mut samplers[i], self.lightsamples);
             let specdiruv = samplers[i].next2();
             let aodir = warp::recenter(
                 warp::sample_cosine_hemisphere(samplers[i].next2()),
@@ -70,7 +71,7 @@ impl Integrator for Cook {
             );
 
             // Global Computations
-            let flecdir = hit.reflect();
+            let flecdir = hit.wdir.reflected(hit.norm);
             let alpha = matr.roughness * matr.roughness;
             let smoothness = ((alpha * alpha).recip() * 2. - 2.).max(1.);
 
@@ -166,29 +167,31 @@ impl Integrator for Cook {
                 let coslobe = (-smoothness.recip()).exp2();
                 let mut specular = Vec3::zero();
                 let mut diffuse = Vec3::zero();
-                for (mut lr, car) in lightrays {
-                    if lr.obstructed() || hit.norm.dot(lr.dir) <= 0. || wnormf.dot(lr.dir) <= 0. {
+                for (mut nr, car) in neerays {
+                    if nr.occluded() || hit.norm.dot(nr.dir) <= 0. || wnormf.dot(nr.dir) <= 0. {
                         continue;
                     }
-                    let lpos = lr.pos + lr.dir * lr.max_t;
-                    lr.pos += wider::copysign(hit.wnorm, lr.dir) * RECAST_EPSILON;
-                    if lr.max_t.is_finite() {
-                        let ldir = lpos - lr.pos;
+                    let lpos = nr.pos + nr.dir * nr.max_t;
+                    nr.pos += wider::copysign(hit.wnorm, nr.dir) * RECAST_EPSILON;
+                    if nr.max_t.is_finite() {
+                        let ldir = lpos - nr.pos;
                         let ldst = ldir.mag();
-                        lr.dir = ldir / ldst;
-                        lr.max_t = ldst - RECAST_EPSILON;
+                        nr.dir = ldir / ldst;
+                        nr.max_t = ldst - RECAST_EPSILON;
                     }
-                    world.obstruct(&mut lr, u16::MAX);
-                    if lr.obstructed() {
+                    world.obstruct(&mut nr, u16::MAX);
+                    if nr.occluded() {
                         continue;
                     }
-                    diffuse += albedo(-lr.dir)
+                    let nwdir = nr.dir;
+                    let nirradiance = nr.get();
+                    diffuse += albedo(-nwdir)
                         * core::f32::consts::FRAC_1_PI
-                        * hit.norm.dot(lr.dir)
-                        * lr.irradiance;
-                    let cosout = flecdir.dot(lr.dir);
+                        * hit.norm.dot(nwdir)
+                        * nirradiance;
+                    let cosout = flecdir.dot(nwdir);
                     if matr.roughness > 0. && matr.specs() && car >= coslobe && cosout >= 0. {
-                        let cosh = (hit.wdir + -lr.dir).normalized().dot(hit.wdir);
+                        let cosh = (hit.wdir + -nwdir).normalized().dot(hit.wdir);
                         let flecwgh = if matr.transmission == 0. {
                             matr.specular + (Vec3::one() - matr.specular) * (1. - cosh).powi(5)
                         } else {
@@ -197,7 +200,7 @@ impl Integrator for Cook {
 
                         let prob = (smoothness + 1.) * core::f32::consts::FRAC_1_PI / 2.
                             * cosout.powf(smoothness);
-                        specular += flecwgh * prob * lr.irradiance;
+                        specular += flecwgh * prob * nirradiance;
                     }
                 }
                 (1. - matr.transmission) * diffuse + specular
@@ -336,14 +339,14 @@ impl Integrator for Cook {
 
             // Compute Ambient Occlusion Color (k_a * V_ao)
             let ambientcolor = if self.ao_distance > 0. && world.ambientcolor != Vec3::zero() && {
-                let mut ar = ray::ShadowRay::new(
+                let mut ar = ray::LightRay::new(
                     hit.wpos + wnormf * RECAST_EPSILON,
                     aodir,
                     self.ao_distance,
                     Vec3::one(),
                 );
                 world.obstruct(&mut ar, u16::MAX);
-                ar.obstructed()
+                ar.occluded()
             } {
                 Vec3::zero()
             } else {
@@ -356,6 +359,6 @@ impl Integrator for Cook {
             // Compute Weighted Final Color
             out[i] = wgh * (ambientcolor * transalbedo + neecolor + emissioncoeff * matr.emission)
         }
-        ((*idxs, out), children)
+        ((idxs, out), children)
     }
 }

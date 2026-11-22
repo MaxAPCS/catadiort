@@ -28,6 +28,7 @@ impl Screen {
     /// - hslice: range of heights
     /// - seed: sampler pcg32 seed
     pub fn create(
+        // todo move this into Integrator
         sampler: crate::options::Sampler,
         frame: Box<[Vec3]>,
         eyepos: Vec3,
@@ -52,9 +53,9 @@ impl Screen {
             f32x4::splat((res.0 as f32).recip()),
             f32x4::splat((res.1 as f32).recip()),
         );
-        #[cfg(feature = "gaussian_weights")]
+        #[cfg(feature = "gaussian_mix")]
         let weights = wider::gaussian_weights(res.2 as _);
-        #[cfg(not(feature = "gaussian_weights"))]
+        #[cfg(not(feature = "gaussian_mix"))]
         let weights = Vec3x4::broadcast(f32x4::splat(((res.2 * res.2) as f32).recip()));
 
         Self {
@@ -87,9 +88,9 @@ impl Screen {
 
                 (
                     (j * res.0 + i).into(),
-                    #[cfg(feature = "gaussian_weights")]
+                    #[cfg(feature = "gaussian_mix")]
                     Vec3x4::broadcast(n.as_array_ref().map(|n| weights[n as usize]).into()),
-                    #[cfg(not(feature = "gaussian_weights"))]
+                    #[cfg(not(feature = "gaussian_mix"))]
                     weights,
                     ray::Rayx4::new(raysrc, raydir, rayspl),
                 )
@@ -119,6 +120,7 @@ impl Screen {
                 &mut self.raystwo,
                 world,
                 depth,
+                depth == max_depth,
             );
             if self.raystwo.is_empty() || depth == max_depth {
                 break;
@@ -130,6 +132,7 @@ impl Screen {
                 &mut self.raysone,
                 world,
                 depth + 1,
+                depth + 1 == max_depth,
             );
             if self.raysone.is_empty() {
                 break;
@@ -148,20 +151,20 @@ impl Screen {
         dst: &mut RayBuf,
         world: &world::World,
         depth: u16,
+        last_pass: bool,
     ) {
         debug_assert!(!src.is_empty() && dst.is_empty());
 
         // Process Intersections
-        src.par_iter_mut().for_each(|(_, _, rays)| {
-            world.intersect(rays, depth);
-            rays.collapse();
-        });
+        src.par_iter_mut()
+            .for_each(|(_, _, rays)| world.intersect(rays, depth));
 
         // Run Integrator
         let mut contribs = Vec::with_capacity(src.len());
         let mut children = Vec::with_capacity(src.len() / 2);
-        src.into_par_iter()
-            .map(|(idxs, wghs, rays)| integrator.integrate(&world, idxs, *wghs, rays, depth))
+        core::mem::take(src)
+            .into_par_iter()
+            .map(|(idxs, wghs, rays)| integrator.integrate(&world, idxs, wghs, rays, depth))
             .unzip_into_vecs(&mut contribs, &mut children);
 
         // Write Colors
@@ -170,6 +173,10 @@ impl Screen {
                 frame[idxs[i] as usize] += contribs[i];
             }
         });
+
+        if last_pass {
+            return;
+        }
 
         // Serialize Children
         let mut children: Vec<_> = children.into_par_iter().flatten_iter().collect(); // todo use accumx4 instead
@@ -210,20 +217,14 @@ impl Screen {
 
         // Finish Pass
         #[cfg(debug_assertions)]
-        println!(
-            "screen: pass count src {} dst {}",
-            src.len() * 4,
-            dst.len() * 4
-        );
-        src.clear();
+        println!("screen: pass count dst {}", dst.len() * 4);
     }
 
     #[allow(unused_variables, unused_mut)]
     fn _aov(&mut self, world: &world::World) {
-        self.raysone.par_iter_mut().for_each(|(_, _, rays)| {
-            world.intersect(rays, 0);
-            rays.collapse();
-        });
+        self.raysone
+            .par_iter_mut()
+            .for_each(|(_, _, rays)| world.intersect(rays, 0));
         self.raysone.iter_mut().for_each(|(idxs, _, rays)| {
             let mut out = [Vec3::zero(); 4];
             #[cfg(feature = "aovraydir")]

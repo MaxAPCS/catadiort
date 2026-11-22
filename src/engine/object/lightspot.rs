@@ -1,7 +1,7 @@
 use ultraviolet::{Vec2, Vec3};
 
 use super::Light;
-use crate::engine::ray::ShadowRay;
+use crate::engine::ray::LightRay;
 
 pub struct SpotLight {
     pub pos: Vec3,
@@ -13,7 +13,7 @@ pub struct SpotLight {
 }
 
 impl Light for SpotLight {
-    fn rayto(&self, pos: Vec3, _: Vec2) -> ShadowRay {
+    fn rayto(&self, pos: Vec3, _: Vec2) -> LightRay {
         let dir = pos - self.pos;
         let dst_sq = dir.mag_sq();
         let dst = dst_sq.sqrt();
@@ -38,7 +38,7 @@ impl Light for SpotLight {
             (1. - u * u) * (1. - u * u)
         };
 
-        ShadowRay::new(pos, -dir, dst, self.intensity * cone * reach / dst_sq)
+        LightRay::new(pos, -dir, dst, self.intensity * cone * reach / dst_sq)
     }
 }
 

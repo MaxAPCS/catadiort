@@ -38,7 +38,7 @@ impl Material {
     }
 
     pub(crate) const fn default() -> Self {
-        Self::new(None, None, RtMaterial::default_material())
+        Self::new(None, None, RtMaterial::default())
     }
 }
 

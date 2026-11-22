@@ -15,9 +15,9 @@ pub(super) trait Integrator: Copy + Sync + Send {
     fn integrate(
         &self,
         world: &super::world::World,
-        idxs: &[u32; 4],
+        idxs: [u32; 4],
         wghs: ultraviolet::Vec3x4,
-        rays: &mut super::ray::Rayx4,
+        rays: super::ray::Rayx4,
         depth: u16,
     ) -> (
         ([u32; 4], [ultraviolet::Vec3; 4]),
