@@ -36,7 +36,7 @@ impl Light for SphereLight {
             };
             let hit = ray.hits.swap_remove(0);
 
-            let (_, matr) = hit.shade(1); // todo use source depth + 1
+            let (_, matr) = hit.shade(1); // fixme use source depth + 1
 
             let density_inv = warp::uniform_cone_pdf(one_minus_cos_theta_max).recip();
             ray::LightRay::new(wpos, wsdir, hit.t, matr.emission * density_inv)

@@ -12,6 +12,7 @@ struct WorldState {
     pub cutoutparams: Option<Arc<[u8]>>,
 
     world: World,
+    materials: smallvec::SmallVec<[Material; 1]>,
 }
 
 impl WorldState {
@@ -23,6 +24,7 @@ impl WorldState {
             cutoutparams: None,
 
             world: World::empty(),
+            materials: smallvec::SmallVec::from_const([Material::default()]),
         }
     }
 
@@ -32,10 +34,10 @@ impl WorldState {
 
     fn set_material(&mut self, material: Option<RtMaterial>) {
         let Some(material) = material else {
-            self.world.materials.push(Material::default());
+            self.materials.push(Material::default());
             return;
         };
-        self.world.materials.push(Material::new(
+        self.materials.push(Material::new(
             self.shader,
             self.shaderparams.clone(),
             material,
@@ -43,7 +45,7 @@ impl WorldState {
     }
 
     fn rebind_material(&mut self) {
-        self.world.materials.push(Material::new(
+        self.materials.push(Material::new(
             self.shader.clone(),
             self.shaderparams.clone(),
             self.last_material().prop,
@@ -51,7 +53,7 @@ impl WorldState {
     }
 
     fn last_material(&self) -> &Material {
-        &self.world.materials[self.world.materials.len() - 1]
+        &self.materials[self.materials.len() - 1]
     }
 }
 
@@ -158,7 +160,7 @@ pub extern "C" fn rtSpotLight(
 pub extern "C" fn rtSphere(radius: RtFloat) {
     if radius <= 0. {
         #[cfg(debug_assertions)]
-        println!("rtobject: skipped rtSphere with radius {}", radius);
+        println!("rtSphere: skipped radius {}", radius);
         return;
     }
     let ctm = transform::get();
@@ -189,7 +191,7 @@ pub unsafe extern "C" fn rtTriangleMesh(
 ) {
     if nverts <= 0 || ntris <= 0 || p.is_null() || indexes.is_null() {
         #[cfg(debug_assertions)]
-        println!("rtobject: skipped rtTriangleMesh with nverts {}", nverts);
+        println!("rtTriangleMesh: skipped nverts {}", nverts);
         return;
     }
 

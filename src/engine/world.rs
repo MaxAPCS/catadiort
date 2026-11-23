@@ -31,7 +31,6 @@ pub(crate) struct World {
     #[cfg(feature = "bvh")]
     spherebvh: Option<BVH<object::Sphere>>,
 
-    pub materials: smallvec::SmallVec<[Material; 12]>,
     pub ambientcolor: Vec3,
     pub environmentcolor: Vec3,
     pub environmenttex: i32,
@@ -61,12 +60,6 @@ impl World {
             #[cfg(feature = "bvh")]
             spherebvh: None,
 
-            materials: unsafe {
-                smallvec::SmallVec::from_const_with_len_unchecked(
-                    [const { Material::default() }; _],
-                    1,
-                )
-            },
             ambientcolor: Vec3::broadcast(0.),
             environmentcolor: Vec3::broadcast(0.),
             environmenttex: -1,

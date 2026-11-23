@@ -65,6 +65,7 @@ impl Primitive for Sphere {
                 let uv1 = Self::uv(opos1);
                 if self.cutout(wpos1, ray.dir, wnorm1, t1, opos1, uv1, depth) {
                     ray.hit(&self.material);
+                    return;
                 }
             }
         }

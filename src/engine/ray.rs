@@ -13,7 +13,7 @@ pub(super) struct Rayx4 {
     pub pos: Vec3x4,
     /// Worldspace Ray Direction
     pub dir: Vec3x4,
-    /// Hit Record (always flattened)
+    /// Hit Record (usually flattened)
     pub hits: smallvec::SmallVec<[Hitx4; 1]>,
 
     // cookism

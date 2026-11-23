@@ -1,13 +1,31 @@
 use ultraviolet::{Vec3, Vec3x4};
 
 use super::{Integrator, RECAST_EPSILON};
-use crate::engine::{MEDIUM_IOR, World, ray, wider};
+use crate::engine::{MEDIUM_IOR, ScreenBasis, World, ray, wider};
 use crate::utils::samplers;
 
-#[derive(Clone, Copy)]
 pub struct Whitted;
 
 impl Integrator for Whitted {
+    #[inline]
+    fn screenray(
+        &self,
+        basis: &ScreenBasis,
+        res: (u32, u32, u32),
+        i: wide::u32x4,
+        j: wide::u32x4,
+        _ni: wide::u32x4,
+        _nj: wide::u32x4,
+    ) -> ray::Rayx4 {
+        let x = (wider::cast_f32x4(i) + 0.5) / res.0 as f32;
+        let y = (wider::cast_f32x4(j) + 0.5) / res.1 as f32;
+        ray::Rayx4::new(
+            basis.eyepos,
+            (basis.tofwd + (1. - 2. * y) * basis.totop + (2. * x - 1.) * basis.torgh).normalized(),
+            samplers::AnySamplerx4::default(),
+        )
+    }
+
     #[inline]
     fn integrate(
         &self,

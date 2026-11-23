@@ -6,7 +6,7 @@ use std::{
 use ultraviolet::Vec3;
 
 use super::*;
-use crate::engine::{Screen, integrators};
+use crate::engine::{Screen, ScreenBasis, integrators};
 use crate::options::{Integrator, OPTIONS, Options};
 use crate::utils::{
     image::write_image,
@@ -374,7 +374,7 @@ pub extern "C" fn rtWorldEnd() {
     if o.lens >= 0. {
         s.lens_radius = o.lens;
     }
-    let lightsamples = o.light_samples as _;
+    let light_samples = o.light_samples as _;
     let seed = o.seed;
 
     if matches!(o.integrator, Integrator::Whitted) {
@@ -394,13 +394,13 @@ pub extern "C" fn rtWorldEnd() {
         world.finish();
 
         let mut frame = vec![Vec3::zero(); s.res.0 as usize * s.res.1 as usize].into_boxed_slice();
-
-        let halfheight = (s.fovy.to_radians() / 2.).tan();
-
-        let tofwd = (s.lookat - s.eye).normalized();
-        let up = tofwd.cross(s.up).cross(tofwd).normalized();
-        let totop = halfheight * up;
-        let torgh = halfheight * (s.res.0 as f32 / s.res.1 as f32) * Vec3::cross(&tofwd, up);
+        let basis = ScreenBasis::new_normalize(
+            s.eye,
+            s.lookat,
+            s.up,
+            s.fovy.to_radians(),
+            s.res.0 as f32 / s.res.1 as f32,
+        );
         let res = (s.res.0 as _, s.res.1 as _, s.samples as _);
 
         let build_time = total.seconds();
@@ -415,30 +415,26 @@ pub extern "C" fn rtWorldEnd() {
             let hslice = i..((i + step) as u32).min(res.1);
             let pixels = hslice.len() as u64 * (res.0 as u64);
 
-            let mut screen = Screen::create(
-                s.sampler,
-                frame,
-                s.eye,
-                tofwd,
-                totop,
-                torgh,
-                s.focus_distance,
-                s.lens_radius,
-                res,
-                hslice,
-                seed,
-            );
-
-            match o.integrator {
-                Integrator::Whitted => screen.process(integrators::Whitted, &world, s.max_depth),
-                Integrator::Cook => screen.process(
-                    integrators::Cook {
+            let screen = match o.integrator {
+                Integrator::Whitted => {
+                    let whit = integrators::Whitted;
+                    let mut screen = Screen::create(&whit, frame, &basis, res, hslice);
+                    screen.process(&whit, &world, s.max_depth);
+                    screen
+                }
+                Integrator::Cook => {
+                    let cook = integrators::Cook {
+                        seed,
+                        sampler: s.sampler,
+                        lens_radius: s.lens_radius,
+                        focus_distance: s.focus_distance,
                         ao_distance: s.ao_distance,
-                        lightsamples,
-                    },
-                    &world,
-                    s.max_depth,
-                ),
+                        light_samples,
+                    };
+                    let mut screen = Screen::create(&cook, frame, &basis, res, hslice);
+                    screen.process(&cook, &world, s.max_depth);
+                    screen
+                }
                 _ => unimplemented!(),
             };
 

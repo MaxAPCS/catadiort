@@ -1,16 +1,54 @@
 use ultraviolet::{Vec3, Vec3x4};
+use wide::f32x4;
 
 use super::{Integrator, RECAST_EPSILON, whitted};
-use crate::engine::{MEDIUM_IOR, World, ray, wider};
+use crate::engine::{MEDIUM_IOR, ScreenBasis, World, ray, wider};
 use crate::utils::{ggx_albedo, samplers, warp};
 
-#[derive(Clone, Copy)]
 pub struct Cook {
+    pub seed: u64,
+    pub sampler: crate::options::Sampler,
+    pub lens_radius: f32,
+    pub focus_distance: f32,
     pub ao_distance: f32,
-    pub lightsamples: u16,
+    pub light_samples: u16,
 }
 
 impl Integrator for Cook {
+    #[inline]
+    fn screenray(
+        &self,
+        basis: &ScreenBasis,
+        res: (u32, u32, u32),
+        i: wide::u32x4,
+        j: wide::u32x4,
+        ni: wide::u32x4,
+        nj: wide::u32x4,
+    ) -> ray::Rayx4 {
+        let n = nj * res.2 + ni;
+        let mut rayspl =
+            samplers::AnySamplerx4::pixel(i, j, n, (res.2 * res.2) as _, self.seed, self.sampler);
+        let film = rayspl.next2();
+        let x = (wider::cast_f32x4(i) + film.x) / res.0 as f32;
+        let y = (wider::cast_f32x4(j) + film.y) / res.1 as f32;
+
+        let mut raysrc = basis.eyepos;
+        let mut raydir =
+            (basis.tofwd + (1. - 2. * y) * basis.totop + (2. * x - 1.) * basis.torgh).normalized();
+
+        let lens = warp::sample_concentric_diskx4(rayspl.next2());
+        if self.lens_radius > 0. {
+            raysrc = basis.eyepos
+                + (basis.totop * lens.y + basis.torgh * lens.x) * f32x4::splat(self.lens_radius);
+            let lensdst = basis.eyepos + raydir * (self.focus_distance / (raydir.dot(basis.tofwd)));
+            raydir = (lensdst - raysrc).normalized();
+        }
+
+        let _time = rayspl.next1();
+
+        ray::Rayx4::new(raysrc, raydir, rayspl)
+    }
+
     #[inline]
     fn integrate(
         &self,
@@ -63,7 +101,7 @@ impl Integrator for Cook {
             let wnormf = wider::copysign(hit.wnorm, -hit.wdir);
 
             // Sample RNG
-            let neerays = world.lightrays(&hit.wpos, &mut samplers[i], self.lightsamples);
+            let neerays = world.lightrays(&hit.wpos, &mut samplers[i], self.light_samples);
             let specdiruv = samplers[i].next2();
             let aodir = warp::recenter(
                 warp::sample_cosine_hemisphere(samplers[i].next2()),

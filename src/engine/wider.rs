@@ -144,6 +144,97 @@ pub fn cast_m32(a: f64x4) -> f32x4 {
         f32::from_bits(if bits & 8 != 0 { u32::MAX } else { 0 }),
     ])
 }
+macro_rules! make_accum4 {
+    (
+        $name:ident;
+        $( $field:ident : $ty:ident ),+ $(,)?
+    ) => {
+        struct $name {
+            n: usize,
+            a: [u32; 4],
+            $( $field: [core::mem::MaybeUninit<$ty>; 4], )+
+        }
+
+        impl $name {
+            pub fn new() -> Self {
+                Self {
+                    n: 0,
+                    a: [0; 4],
+                    $( $field: [const { core::mem::MaybeUninit::uninit() }; 4], )+
+                }
+            }
+
+            /// Returns: is buffer full?
+            pub fn push(&mut self, a: u32, $($field: $ty),+) -> bool {
+                debug_assert!(self.n < 4);
+                self.a[self.n] = a;
+                $( self.$field[self.n].write($field); )+
+                self.n += 1;
+                self.n == 4
+            }
+
+            pub fn pop(&mut self) -> ([u32; 4], $( [$ty; 4] ),+) {
+                debug_assert_eq!(self.n, 4);
+                self.n = 0;
+                (
+                    self.a,
+                    $(
+                        unsafe {
+                            Self::assume_init_array(core::mem::replace(
+                                &mut self.$field,
+                                [const { core::mem::MaybeUninit::uninit() }; 4],
+                            ))
+                        }
+                    ),+
+                )
+            }
+
+            // pub fn peek(&self) -> Option<(u32, $(&$ty),+)> {
+            //     if self.n == 0 {
+            //         None
+            //     } else {
+            //         Some((
+            //             self.a[self.n - 1],
+            //             $( unsafe { self.$field[self.n - 1].assume_init_ref() }, )+
+            //         ))
+            //     }
+            // }
+
+            #[inline]
+            unsafe fn assume_init_array<T, const N: usize>(
+                arr: [core::mem::MaybeUninit<T>; N],
+            ) -> [T; N] {
+                unsafe { core::ptr::read(&arr as *const _ as *const [T; N]) }
+            }
+        }
+
+        impl $name {
+            pub fn flush(&mut self) -> Option<([u32; 4], $( [$ty; 4] ),+)> {
+                if self.n == 0 {
+                    return None;
+                }
+                $(
+                    for empty in &mut self.$field[self.n..] {
+                        empty.write(<$ty as Default>::default());
+                    }
+                )+
+                self.n = 4;
+                Some(self.pop())
+            }
+        }
+
+        impl Drop for $name {
+            fn drop(&mut self) {
+                for i in 0..self.n {
+                    unsafe {
+                        $( self.$field[i].assume_init_drop(); )+
+                    }
+                }
+            }
+        }
+    }
+}
+pub(crate) use make_accum4;
 
 pub struct Chunku32x4<const COUNT: usize, I: Iterator<Item = [u32; COUNT]>> {
     i: I,

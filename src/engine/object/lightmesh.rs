@@ -102,7 +102,7 @@ impl Light for MeshLight {
         if !self.cutout(&hit, u16::MAX) {
             return ray::LightRay::empty();
         }
-        let (_, matr) = hit.shade(1); // todo use source depth + 1
+        let (_, matr) = hit.shade(1); // fixme use source depth + 1
 
         let wdst2 = (hit.wpos - rwpos).mag_sq();
         let owareatrans =

@@ -280,6 +280,21 @@ impl Mesh {
             .sqrt()
     }
 
+    #[cfg(not(feature = "bvh"))]
+    pub fn tricentroid(triangles: &[Tri]) -> Vec3 {
+        let (numer, denom) = triangles
+            .par_iter()
+            .fold(
+                || (Vec3::zero(), 0.),
+                |(numer, denom), tri| {
+                    let area = tri.operp().mag();
+                    (numer + tri.centroid() * area, denom + area)
+                },
+            )
+            .reduce(|| (Vec3::zero(), 0.), |a, b| (a.0 + b.0, a.1 + b.1));
+        numer / denom
+    }
+
     #[inline]
     pub(in crate::engine) fn create(
         meshref: MeshReference,

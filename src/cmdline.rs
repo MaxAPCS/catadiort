@@ -345,7 +345,7 @@ options, each overriding what the scene file set:
 }
 
 /* the options ------------------------------------------------------------ */
-
+#[inline]
 fn fail(message: &str) -> ! {
     eprintln!("{}", message);
     std::process::exit(1);
