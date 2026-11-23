@@ -15,20 +15,35 @@
 
 #![allow(dead_code)] // size and texel are HW4's (the environment as a light)
 
+use image::buffer::ConvertBuffer;
+use image::{Rgb32FImage, RgbImage, Rgba32FImage};
 use std::cell::RefCell;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
-
 use ultraviolet::Vec4;
 
 use super::image::{read_image, srgb_to_linear};
 
-struct Texture {
+pub struct Texture {
     w: i32,
     h: i32,
     rgba_f: Vec<f32>, /* float images: 4 floats per texel, top row first */
     rgba8: Vec<u8>,   /* 8-bit images: 4 bytes per texel */
     decode: &'static [f32; 256], /* 8-bit images: the color channels' byte-to-linear table */
+}
+
+impl Into<Rgb32FImage> for &Texture {
+    fn into(self) -> Rgb32FImage {
+        if self.rgba_f.is_empty() {
+            RgbImage::from_vec(self.w as _, self.h as _, self.rgba8.clone())
+                .unwrap()
+                .convert()
+        } else {
+            Rgba32FImage::from_vec(self.w as _, self.h as _, self.rgba_f.clone())
+                .unwrap()
+                .convert()
+        }
+    }
 }
 
 /// The two byte-to-linear tables: sRGB decoded, and plain (alpha, masks,
@@ -66,7 +81,7 @@ thread_local! {
 
 /// Run f on the texture of a handle (None for an invalid one), through this
 /// thread's snapshot of the table.
-fn with_texture<R>(handle: i32, f: impl FnOnce(Option<&Texture>) -> R) -> R {
+pub fn with_texture<R>(handle: i32, f: impl FnOnce(Option<&Texture>) -> R) -> R {
     SNAPSHOT.with(|cell| {
         let mut snap = cell.borrow_mut();
         let changes = CHANGES.load(Ordering::Acquire);

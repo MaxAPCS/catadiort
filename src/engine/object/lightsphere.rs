@@ -1,7 +1,8 @@
-use ultraviolet::{Vec2, Vec3};
+use ultraviolet::{Vec2, Vec3, Vec3x4};
 
 use super::{Light, Primitive, primitivesphere::Sphere};
 use crate::engine::{PointLight, ray};
+use crate::utils::samplers::AnySamplerx4;
 use crate::utils::warp;
 
 pub struct SphereLight(Sphere, PointLight);
@@ -24,17 +25,22 @@ impl Light for SphereLight {
         let wdir = wdir / wdst;
 
         let ratio = wrad * wrad / wdstsq;
-        if wrad * wrad < wdstsq {
+        if wrad < wdst {
             let one_minus_cos_theta_max = ratio / (1. + (1. - ratio).sqrt());
             let wsdir =
                 warp::recenter(warp::sample_uniform_cone(uv, one_minus_cos_theta_max), wdir);
 
-            let mut ray = ray::LightRay::new(wpos, wsdir, f32::INFINITY, Vec3::one());
-            self.0.obstruct(&mut ray, u16::MAX);
+            let mut ray = ray::Rayx4::new(
+                Vec3x4::splat(wpos),
+                Vec3x4::splat(wsdir),
+                AnySamplerx4::default(),
+            );
+            self.0.intersect(&mut ray, u16::MAX);
             if ray.hits.is_empty() {
                 return ray::LightRay::empty();
             };
-            let hit = ray.hits.swap_remove(0);
+            let hits: [_; 4] = ray.hits.swap_remove(0).into();
+            let hit = &hits[0];
 
             let (_, matr) = hit.shade(1); // fixme use source depth + 1
 

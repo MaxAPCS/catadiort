@@ -14,6 +14,7 @@ pub(crate) const MEDIUM_IOR: f32 = 1.0;
 
 pub(crate) struct World {
     pub directionallights: Vec<object::DirectionalLight>,
+    environmentlight: Option<object::EnvironmentLight>,
     meshlights: Vec<(u64, Option<object::MeshLight>)>,
     pub pointlights: Vec<object::PointLight>,
     spherelights: Vec<object::SphereLight>,
@@ -43,6 +44,7 @@ impl World {
     pub const fn empty() -> Self {
         Self {
             directionallights: Vec::new(),
+            environmentlight: None,
             meshlights: Vec::new(),
             pointlights: Vec::new(),
             spherelights: Vec::new(),
@@ -130,12 +132,12 @@ impl World {
                 Some(instance) if let Some(instance) = self.meshlights[instance].1.as_ref() => {
                     self.meshlights.push((
                         *hash,
-                        object::MeshLight::emissive_instance(Some(instance), &meshref),
+                        object::MeshLight::from_emissive(instance.otris.clone(), &meshref),
                     ))
                 }
                 _ => self.meshlights.push((
                     *hash,
-                    object::MeshLight::emissive_create(&triangles, &meshref),
+                    object::MeshLight::from_emissive(triangles.clone().into(), &meshref),
                 )),
             };
         }
@@ -172,6 +174,11 @@ impl World {
                 core::mem::take(&mut self.spheres).into_boxed_slice(),
             ))
         }
+        self.environmentlight = texture::with_texture(self.environmenttex, |envtex| {
+            envtex.map(|envtex| {
+                object::EnvironmentLight::new(envtex.into(), self.environmentrotation)
+            })
+        });
         self.meshlights = core::mem::take(&mut self.meshlights)
             .into_iter()
             .filter(|l| l.1.is_some())
@@ -263,6 +270,20 @@ impl World {
         let n = utils::factor(samples);
         let m = samples / n;
         let invsamp = (samples as f32).recip();
+        if let Some(l) = &self.environmentlight {
+            let c = l.cos_angular_radius(*point);
+            let sample = uv.next2();
+            for i in 0..m {
+                for j in 0..n {
+                    let uv = Vec2::new(
+                        ((i as f32 + sample.x) / m as f32).min(1.),
+                        ((j as f32 + sample.y) / n as f32).min(1.),
+                    );
+                    let r = l.rayto(*point, uv) * invsamp;
+                    out.push((r, c));
+                }
+            }
+        }
         for l in self.pointlights.iter() {
             out.push((l.rayto(*point, uv.next2()), l.cos_angular_radius(*point)));
         }

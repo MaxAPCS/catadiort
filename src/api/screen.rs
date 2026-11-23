@@ -50,9 +50,8 @@ pub struct ScreenState {
     pub focus_distance: f32,
     pub sampler: Sampler,
     pub ao_distance: f32,
-    pub has_portal: bool, /* rtEnvironmentPortal's quad, world space; sampling the environment through it is
-                          HW3 extra credit, and nothing reads it until then */
-    pub portal: [[f32; 3]; 4],
+    pub environment_portal: Option<[Vec3; 4]>, /* rtEnvironmentPortal's quad, world space; sampling the environment through it is
+                                               HW3 extra credit, and nothing reads it until then */
 }
 
 impl ScreenState {
@@ -79,8 +78,7 @@ impl ScreenState {
             focus_distance: 1.0,
             sampler: Sampler::Center,
             ao_distance: 0.0,
-            has_portal: false,
-            portal: [[0.0; 3]; 4],
+            environment_portal: None,
         }
     }
 }
@@ -323,16 +321,11 @@ pub extern "C" fn rtAmbientOcclusion(ao_distance: RtFloat) {
 /// # Safety
 /// `corners` is null or points at four RtPoints.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn rtEnvironmentPortal(corners: *const RtPoint) {
+pub unsafe extern "C" fn rtEnvironmentPortal(corners: *const [RtPoint; 4]) {
     let mut s = state();
-    s.has_portal = !corners.is_null();
     if !corners.is_null() {
         let m = transform::get();
-        for i in 0..4 {
-            s.portal[i] = m
-                .transform_point3(Vec3::from(unsafe { *corners.add(i) }))
-                .into();
-        }
+        s.environment_portal = Some(unsafe { *corners }.map(|c| m.transform_point3(c)));
     }
 }
 

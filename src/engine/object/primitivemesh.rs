@@ -1,4 +1,4 @@
-use rayon::iter::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterator};
+use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use std::sync::Arc;
 use ultraviolet::{Mat4, Vec2, Vec2x4, Vec3, Vec3x4};
 use wide::{CmpGe, CmpLe, f32x4, f64x4};
@@ -264,22 +264,6 @@ impl Mesh {
             .collect()
     }
 
-    pub fn triextent(triangles: &[Tri], center: Vec3) -> f32 {
-        triangles
-            .par_iter()
-            .fold(
-                || f32::NEG_INFINITY,
-                |mut extsq, tri| {
-                    for v in tri.oposs() {
-                        extsq = extsq.max((center - v).mag_sq());
-                    }
-                    extsq
-                },
-            )
-            .reduce(|| f32::NEG_INFINITY, f32::max)
-            .sqrt()
-    }
-
     #[cfg(not(feature = "bvh"))]
     pub fn tricentroid(triangles: &[Tri]) -> Vec3 {
         let (numer, denom) = triangles
@@ -441,21 +425,6 @@ impl Primitive for Tri {
 
 impl Tri {
     #[inline]
-    fn oposs(&self) -> [Vec3; 3] {
-        [self.o, self.o + self.e1, self.o + self.e2]
-    }
-
-    #[inline]
-    pub(super) fn operp(&self) -> Vec3 {
-        Vec3::cross(&self.e1, self.e2)
-    }
-
-    #[inline]
-    pub(super) fn pos(&self, bc: Vec3) -> Vec3 {
-        self.o + self.e1 * bc.y + self.e2 * bc.z
-    }
-
-    #[inline]
     pub(super) fn hit(&self, pos: Vec3, dir: Vec3, t: f32, bc: (f32, f32)) -> ray::Hit {
         ray::Hit {
             opos: Vec3::broadcast(f32::NAN),
@@ -468,6 +437,16 @@ impl Tri {
             color: self.color(bc).unwrap_or(Vec3::broadcast(f32::NAN)),
             material: None,
         }
+    }
+
+    #[inline]
+    pub(super) fn oposs(&self) -> [Vec3; 3] {
+        [self.o, self.o + self.e1, self.o + self.e2]
+    }
+
+    #[inline]
+    pub(super) fn opos(&self, bc: Vec3) -> Vec3 {
+        self.o + self.e1 * bc.y + self.e2 * bc.z
     }
 
     #[inline]

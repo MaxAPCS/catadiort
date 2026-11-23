@@ -1,6 +1,7 @@
 use ultraviolet::{Vec2, Vec3};
 
 mod lightdirectional;
+mod lightenvironment;
 mod lightmesh;
 mod lightpoint;
 mod lightsphere;
@@ -9,6 +10,7 @@ mod primitivemesh;
 mod primitivesphere;
 
 pub(crate) use lightdirectional::*;
+pub(crate) use lightenvironment::*;
 pub(crate) use lightmesh::*;
 pub(crate) use lightpoint::*;
 pub(crate) use lightsphere::*;

@@ -159,12 +159,17 @@ impl LightRay {
     #[inline]
     /// Collapse and pop irradiance
     pub fn get(mut self) -> Vec3 {
-        for hit in &self.hits {
+        #[cfg(feature = "shadow_tint")]
+        for hit in self.hits.iter() {
             let matr = material!(hit.material).prop;
             self.irradiance *= matr.albedo * matr.transmission;
             if self.occluded() {
                 break;
             }
+        }
+        #[cfg(not(feature = "shadow_tint"))]
+        if !self.hits.is_empty() {
+            self.irradiance = Vec3::zero();
         }
         self.irradiance
     }
